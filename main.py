@@ -6,6 +6,7 @@ from src.graph_manager import save_graph, load_graph
 from src.retriever import retrieve_context
 from src.logger import logger
 
+
 def main():
     """Main function to run the Graph RAG application."""
     # --- 1. Load or Build the Knowledge Graph ---
@@ -14,7 +15,7 @@ def main():
     if knowledge_graph is None:
         logger.info("Building new knowledge graph from source data...")
         # Path to your source text file
-        source_file = "data/sample.txt"
+        source_file = "data/test.txt"
         if not os.path.exists(source_file):
             logger.error(f"Source data file not found at {source_file}")
             return
@@ -39,7 +40,7 @@ def main():
         try:
             query = input("\nYour question: ")
         except KeyboardInterrupt:
-            break # Allow Ctrl+C to exit gracefully
+            break  # Allow Ctrl+C to exit gracefully
 
         if query.lower() == "exit":
             break
@@ -55,7 +56,9 @@ def main():
             continue
 
         # logger.debug(f"--- Retrieved Context ---\n{context}\n--------------------------") # For debugging
-        logger.info(f"--- Retrieved Context ---\n{context}\n--------------------------") # Uncomment for debugging
+        logger.info(
+            f"--- Retrieved Context ---\n{context}\n--------------------------"
+        )  # Uncomment for debugging
 
         # --- 4. Generate Answer with LLM ---
         logger.info("Generating answer...")

@@ -1,5 +1,6 @@
 import networkx as nx
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.config import embedding_client, EMBEDDING_MODEL_NAME
 from src.logger import logger
 
@@ -16,19 +17,37 @@ def get_embedding_from_api(text: str, model: str):
         logger.error(f"Error getting embedding from API: {e}")
         return None
 
-
 def get_chunk_embeddings(G: nx.Graph):
-    """Generates and caches embeddings for all chunk nodes in the graph via API call."""
+    """Generates and caches embeddings for all chunk nodes in parallel."""
     logger.info("Generating embeddings for graph chunks...")
-    for node_id, data in G.nodes(data=True):
-        if data.get("type") == "chunk" and "embedding" not in data:
-            content = data.get("content", "")
-            embedding = get_embedding_from_api(content, model=EMBEDDING_MODEL_NAME)
-            if embedding:
-                G.nodes[node_id]["embedding"] = embedding
-            else:
-                logger.warning(f"Could not generate embedding for chunk {node_id}")
+    
+    chunks_to_process = {
+        node_id: data.get('content', '')
+        for node_id, data in G.nodes(data=True)
+        if data.get('type') == 'chunk' and 'embedding' not in data
+    }
 
+    if not chunks_to_process:
+        logger.info("All chunk embeddings are already cached.")
+        return
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_node_id = {
+            executor.submit(get_embedding_from_api, content, EMBEDDING_MODEL_NAME): node_id
+            for node_id, content in chunks_to_process.items()
+        }
+
+        for future in as_completed(future_to_node_id):
+            node_id = future_to_node_id[future]
+            try:
+                embedding = future.result()
+                if embedding:
+                    G.nodes[node_id]['embedding'] = embedding
+                    logger.info(f"Generated embedding for chunk {node_id}")
+                else:
+                    logger.warning(f"Failed to generate embedding for chunk {node_id}")
+            except Exception as exc:
+                logger.error(f"Chunk {node_id} generated an exception during embedding: {exc}")
 
 def retrieve_context(
     query: str, G: nx.Graph, top_k: int = 3, search_depth: int = 2
