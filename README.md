@@ -41,7 +41,7 @@ This project implements a sophisticated memory and knowledge management system f
 
 1.  **Clone the repository:**
     ```bash
-    git clone <your-repo-url>
+    git clone https://github.com/1nterstellar-JD/llm-memory-manager.git
     cd llm-memory-manager
     ```
 
