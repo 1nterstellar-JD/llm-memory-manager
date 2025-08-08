@@ -1,14 +1,7 @@
 import networkx as nx
-from openai import AzureOpenAI
-from src.config import OPENAI_API_KEY, LLM_MODEL_NAME, OPENAI_BASE_URL
+import json
+from src.config import llm_client, LLM_MODEL_NAME
 from src.logger import logger
-
-client = AzureOpenAI(
-    api_version="2024-12-01-preview",
-    api_key=OPENAI_API_KEY,
-    azure_endpoint=OPENAI_BASE_URL,
-)
-
 
 def extract_entities_with_llm(text_chunk: str):
     """Uses OpenAI to extract entities from a text chunk."""
@@ -19,7 +12,7 @@ def extract_entities_with_llm(text_chunk: str):
     JSON Response:"""
 
     try:
-        response = client.chat.completions.create(
+        response = llm_client.chat.completions.create(
             model=LLM_MODEL_NAME,
             messages=[
                 {
@@ -31,15 +24,11 @@ def extract_entities_with_llm(text_chunk: str):
             temperature=0.2,
             response_format={"type": "json_object"},
         )
-        # Correctly parsing the JSON string from the response
-        import json
-
         result = json.loads(response.choices[0].message.content)
         return result.get("entities", [])
     except Exception as e:
         logger.error(f"An error occurred while calling OpenAI API: {e}")
         return []
-
 
 def build_graph_from_chunks(chunks: list[str]):
     """Builds a knowledge graph from text chunks."""

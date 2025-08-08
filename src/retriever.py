@@ -1,27 +1,16 @@
 import networkx as nx
 import numpy as np
-from openai import OpenAI
-from src.config import EMBEDDING_MODEL_NAME, OPENAI_API_KEY, EMBEDDING_MODEL_URL
+from src.config import embedding_client, EMBEDDING_MODEL_NAME
 from src.logger import logger
-
-# Initialize a separate client for embeddings, as it might have a different base URL
-# In your case, it points to the local service at http://127.0.0.1:1234/v1
-# We will use the same client as in main.py for simplicity, assuming the base_url is set correctly.
-client = OpenAI(api_key=OPENAI_API_KEY, base_url=EMBEDDING_MODEL_URL)
-
 
 def get_embedding_from_api(text: str, model: str):
     """Generates embedding for a text using an OpenAI-compatible API."""
     try:
-        # The API expects a list of strings, so we wrap the text in a list
-        response = client.embeddings.create(input=[text], model=model)
-        # Add a check to ensure data is not empty
+        response = embedding_client.embeddings.create(input=[text], model=model)
         if response.data and response.data[0].embedding:
             return response.data[0].embedding
         else:
-            logger.error(
-                f"API call successful, but no embedding data received. Response: {response}"
-            )
+            logger.error(f"API call successful, but no embedding data received. Response: {response}")
             return None
     except Exception as e:
         logger.error(f"Error getting embedding from API: {e}")

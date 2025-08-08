@@ -1,23 +1,10 @@
 import os
-from openai import AzureOpenAI
-from src.config import (
-    OPENAI_API_KEY,
-    LLM_MODEL_NAME,
-    GRAPH_OUTPUT_PATH,
-    OPENAI_BASE_URL,
-)
+from src.config import llm_client, LLM_MODEL_NAME, GRAPH_OUTPUT_PATH
 from src.data_processor import load_and_split_text
 from src.graph_builder import build_graph_from_chunks
 from src.graph_manager import save_graph, load_graph
 from src.retriever import retrieve_context
 from src.logger import logger
-
-# Initialize OpenAI client
-client = AzureOpenAI(
-    api_version="2024-12-01-preview",
-    api_key=OPENAI_API_KEY,
-    azure_endpoint=OPENAI_BASE_URL,
-)
 
 def main():
     """Main function to run the Graph RAG application."""
@@ -83,7 +70,7 @@ def main():
 
             Answer:"""
 
-            response = client.chat.completions.create(
+            response = llm_client.chat.completions.create(
                 model=LLM_MODEL_NAME,
                 messages=[
                     {
