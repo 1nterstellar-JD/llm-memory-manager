@@ -1,0 +1,5 @@
+openai
+networkx
+langchain-text-splitters
+python-dotenv
+loguru
