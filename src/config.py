@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from openai import OpenAI, AzureOpenAI
+from openai import AsyncOpenAI, AsyncAzureOpenAI
 
 load_dotenv()
 
@@ -15,13 +15,13 @@ if not OPENAI_BASE_URL:
     raise ValueError("OPENAI_BASE_URL not found in .env file")
 
 # --- Clients ---
-llm_client = AzureOpenAI(
+llm_client = AsyncAzureOpenAI(
     api_version="2024-12-01-preview",
     api_key=OPENAI_API_KEY,
     azure_endpoint=OPENAI_BASE_URL,
 )
 
-embedding_client = OpenAI(
+embedding_client = AsyncOpenAI(
     api_key=OPENAI_API_KEY,
     base_url=EMBEDDING_MODEL_URL
 )

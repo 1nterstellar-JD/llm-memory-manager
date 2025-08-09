@@ -28,3 +28,4 @@ output/
 __pycache__/
 *.pyc
 .DS_Store
+milvus_data/
