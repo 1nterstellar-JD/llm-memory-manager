@@ -3,3 +3,4 @@ networkx
 langchain-text-splitters
 python-dotenv
 loguru
+pymilvus

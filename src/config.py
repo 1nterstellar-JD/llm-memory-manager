@@ -34,3 +34,8 @@ EMBEDDING_MODEL_NAME = "text-embedding-qwen3-embedding-0.6b"
 GRAPH_OUTPUT_PATH = "output/knowledge_graph.gml"
 CHUNK_SIZE = 300
 CHUNK_OVERLAP = 0
+
+# --- Milvus Configuration ---
+MILVUS_URI = "./milvus_data/milvus.db"
+COLLECTION_NAME = "knowledge_graph_chunks"
+VECTOR_DIMENSION = 1024  # For text-embedding-qwen3-embedding-0.6b

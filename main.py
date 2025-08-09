@@ -82,7 +82,7 @@ def main():
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.5,
+                temperature=0.7,
             )
             answer = response.choices[0].message.content
             logger.success(f"--- Answer ---\n{answer}")
