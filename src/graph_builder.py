@@ -1,6 +1,8 @@
 import networkx as nx
 import json
 import asyncio
+from typing import List
+from langchain_core.documents import Document
 from src.config import llm_client, LLM_MODEL_NAME
 from src.logger import logger
 
@@ -33,17 +35,17 @@ async def extract_entities_with_llm(text_chunk: str, chunk_index: int, total_chu
         logger.error(f"An error occurred in chunk {chunk_index} while calling OpenAI API: {e}")
         return chunk_index, []
 
-async def build_graph_from_chunks(chunks: list[str]):
-    """Builds a knowledge graph from text chunks asynchronously."""
+async def build_graph_from_chunks(chunks: List[Document]):
+    """Builds a knowledge graph from a list of Document objects asynchronously."""
     G = nx.DiGraph()
     
     # Create nodes for each chunk first
     for i, chunk in enumerate(chunks):
-        G.add_node(f"chunk_{i}", type="chunk", content=chunk)
+        G.add_node(f"chunk_{i}", type="chunk", content=chunk.page_content, metadata=chunk.metadata)
 
     # Create concurrent tasks for entity extraction
     tasks = [
-        extract_entities_with_llm(chunk, i, len(chunks))
+        extract_entities_with_llm(chunk.page_content, i, len(chunks))
         for i, chunk in enumerate(chunks)
     ]
     

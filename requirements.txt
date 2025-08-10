@@ -1,6 +1,9 @@
 openai
 networkx
 langchain-text-splitters
+langchain-experimental
+langchain-openai
 python-dotenv
 loguru
 pymilvus
+numpy

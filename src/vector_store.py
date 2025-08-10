@@ -107,6 +107,13 @@ class VectorStore:
             logger.error(f"Failed to check existence for nodes: {e}")
             return []
 
+    async def close(self):
+        """Closes the Milvus client connection."""
+        if self.is_ready.is_set():
+            logger.info("Closing Milvus client connection.")
+            await asyncio.to_thread(self._client.close)
+            self.is_ready.clear()
+
 # Singleton instance
 vector_store = VectorStore()
 

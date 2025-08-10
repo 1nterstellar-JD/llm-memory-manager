@@ -13,78 +13,82 @@ async def main():
     # --- 0. Setup Vector Store ---
     await vector_store.setup()
 
-    # --- 1. Load or Build the Knowledge Graph ---
-    knowledge_graph = load_graph(GRAPH_OUTPUT_PATH)
+    try:
+        # --- 1. Load or Build the Knowledge Graph ---
+        knowledge_graph = load_graph(GRAPH_OUTPUT_PATH)
 
-    if knowledge_graph is None:
-        logger.info("Building new knowledge graph from source data...")
-        source_file = "data/test.txt"
-        if not os.path.exists(source_file):
-            logger.error(f"Source data file not found at {source_file}")
-            return
+        if knowledge_graph is None:
+            logger.info("Building new knowledge graph from source data...")
+            source_file = "data/test.txt"
+            if not os.path.exists(source_file):
+                logger.error(f"Source data file not found at {source_file}")
+                return
 
-        chunks = load_and_split_text(source_file)
-        if not chunks:
-            logger.error("No text chunks were created. Exiting.")
-            return
+            chunks = await load_and_split_text(source_file)
+            if not chunks:
+                logger.error("No text chunks were created. Exiting.")
+                return
 
-        knowledge_graph = await build_graph_from_chunks(chunks)
-        save_graph(knowledge_graph, GRAPH_OUTPUT_PATH)
+            knowledge_graph = await build_graph_from_chunks(chunks)
+            save_graph(knowledge_graph, GRAPH_OUTPUT_PATH)
 
-    # --- 2. Start Interactive Q&A Loop ---
-    logger.success("--- Knowledge Graph RAG is Ready ---")
-    logger.info("Ask a question about the content. Type 'exit' to quit.")
+        # --- 2. Start Interactive Q&A Loop ---
+        logger.success("--- Knowledge Graph RAG is Ready ---")
+        logger.info("Ask a question about the content. Type 'exit' to quit.")
 
-    while True:
-        try:
-            query = await asyncio.to_thread(input, "\nYour question: ")
-        except KeyboardInterrupt:
-            break
+        while True:
+            try:
+                query = await asyncio.to_thread(input, "\nYour question: ")
+            except KeyboardInterrupt:
+                break
 
-        if query.lower() == "exit":
-            break
-        if not query.strip():
-            continue
+            if query.lower() == "exit":
+                break
+            if not query.strip():
+                continue
 
-        # --- 3. Retrieve Context from the Graph ---
-        logger.info("Retrieving context from the graph...")
-        context = await retrieve_context(query, knowledge_graph)
+            # --- 3. Retrieve Context from the Graph ---
+            logger.info("Retrieving context from the graph...")
+            context = await retrieve_context(query, knowledge_graph)
 
-        if "Error:" in context:
-            logger.error(context)
-            continue
+            if "Error:" in context:
+                logger.error(context)
+                continue
 
-        logger.info(f"--- Retrieved Context ---\n{context}\n--------------------------")
+            logger.info(f"--- Retrieved Context ---\n{context}\n--------------------------")
 
-        # --- 4. Generate Answer with LLM ---
-        logger.info("Generating answer...")
-        try:
-            prompt = f"""Based on the following context, please answer the user's question.
-            If the context does not contain the answer, say that you cannot find the information in the provided text.
+            # --- 4. Generate Answer with LLM ---
+            logger.info("Generating answer...")
+            try:
+                prompt = f"""Based on the following context, please answer the user's question.
+                If the context does not contain the answer, say that you cannot find the information in the provided text.
 
-            Context:
-            {context}
+                Context:
+                {context}
 
-            Question: {query}
+                Question: {query}
 
-            Answer:"""
+                Answer:"""
 
-            response = await llm_client.chat.completions.create(
-                model=LLM_MODEL_NAME,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant that answers questions based on provided context.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.7,
-            )
-            answer = response.choices[0].message.content
-            logger.success(f"--- Answer ---\n{answer}")
+                response = await llm_client.chat.completions.create(
+                    model=LLM_MODEL_NAME,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a helpful assistant that answers questions based on provided context.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.7,
+                )
+                answer = response.choices[0].message.content
+                logger.success(f"--- Answer ---\n{answer}")
 
-        except Exception as e:
-            logger.error(f"An error occurred while generating the answer: {e}")
+            except Exception as e:
+                logger.error(f"An error occurred while generating the answer: {e}")
+    finally:
+        # --- 5. Cleanup ---
+        await vector_store.close()
 
 
 if __name__ == "__main__":
