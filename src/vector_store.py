@@ -8,6 +8,10 @@ from src.config import MILVUS_URI, COLLECTION_NAME, VECTOR_DIMENSION
 
 class VectorStore:
     def __init__(self):
+        db_dir = os.path.dirname(MILVUS_URI)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+            logger.info(f"Created Milvus data directory: {db_dir}")
         self._client = MilvusClient(uri=MILVUS_URI)
         self._collection_name = COLLECTION_NAME
         self.is_ready = asyncio.Event()
@@ -54,15 +58,19 @@ class VectorStore:
             logger.error(f"Failed to create collection or index: {e}")
 
     async def insert(self, node_id: int, vector: list):
-        """Asynchronously inserts a vector into the collection."""
+        """Asynchronously inserts a single vector into the collection."""
+        await self.insert_batch([(node_id, vector)])
+
+    async def insert_batch(self, data: list[tuple[int, list]]):
+        """Asynchronously inserts a batch of vectors into the collection."""
         await self.is_ready.wait()
+        if not data:
+            return
         try:
-            entities = [{"id": node_id, "embedding": vector}]
+            entities = [{"id": node_id, "embedding": vector} for node_id, vector in data]
             await asyncio.to_thread(self._client.insert, collection_name=self._collection_name, data=entities)
-            # Flush is handled automatically by the client in many cases, but can be called manually if needed
-            # await asyncio.to_thread(self._client.flush, self._collection_name)
         except Exception as e:
-            logger.error(f"Failed to insert vector for node {node_id}: {e}")
+            logger.error(f"Failed to batch insert vectors: {e}")
 
     async def search(self, query_vector: list, top_k: int) -> list:
         """Asynchronously searches for the most similar vectors."""

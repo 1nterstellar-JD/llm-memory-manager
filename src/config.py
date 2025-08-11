@@ -15,20 +15,23 @@ if not OPENAI_BASE_URL:
     raise ValueError("OPENAI_BASE_URL not found in .env file")
 
 # --- Clients ---
-llm_client = AsyncAzureOpenAI(
-    api_version="2024-12-01-preview",
+# llm_client = AsyncAzureOpenAI(
+#     api_version="2024-12-01-preview",
+#     api_key=OPENAI_API_KEY,
+#     azure_endpoint=OPENAI_BASE_URL,
+# )
+llm_client = AsyncOpenAI(
     api_key=OPENAI_API_KEY,
-    azure_endpoint=OPENAI_BASE_URL,
+    base_url=OPENAI_BASE_URL,
 )
 
-embedding_client = AsyncOpenAI(
-    api_key=OPENAI_API_KEY,
-    base_url=EMBEDDING_MODEL_URL
-)
+embedding_client = AsyncOpenAI(api_key=OPENAI_API_KEY, base_url=EMBEDDING_MODEL_URL)
 
 # --- Model Names ---
-LLM_MODEL_NAME = "gpt4o"
-EMBEDDING_MODEL_NAME = "text-embedding-qwen3-embedding-0.6b"
+# LLM_MODEL_NAME = "gpt4o"
+LLM_MODEL_NAME = "Qwen3-8B"
+EMBEDDING_MODEL_NAME = "Qwen3-Embedding-0.6B"
+# EMBEDDING_MODEL_NAME = "text-embedding-qwen3-embedding-0.6b"
 
 # --- Graph and Text Configuration ---
 GRAPH_OUTPUT_PATH = "output/knowledge_graph.gml"

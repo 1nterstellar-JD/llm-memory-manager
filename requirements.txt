@@ -7,3 +7,6 @@ python-dotenv
 loguru
 pymilvus
 numpy
+nltk
+rank-bm25
+jieba
