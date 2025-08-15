@@ -4,7 +4,6 @@ from pymilvus.milvus_client import MilvusClient
 from src.logger import logger
 from src.config import (
     MILVUS_URI,
-    DOC_COLLECTION_NAME,
     CONVERSATION_COLLECTION_NAME,
     VECTOR_DIMENSION
 )
@@ -111,8 +110,7 @@ class VectorCollectionManager:
             logger.info("Closing shared Milvus client connection.")
             await asyncio.to_thread(cls._client.close)
 
-# Singleton instances for each collection
-doc_vector_store = VectorCollectionManager(DOC_COLLECTION_NAME, id_type="int")
+# Singleton instance for the conversation collection
 conversation_vector_store = VectorCollectionManager(
     CONVERSATION_COLLECTION_NAME,
     id_type="string",

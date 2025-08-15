@@ -7,6 +7,14 @@ from src.config import llm_client, LLM_MODEL_NAME
 from src.graph_db_manager import graph_db_manager
 from src.logger import logger
 
+def setup_conversation_database():
+    """Sets up constraints for the conversational knowledge graph."""
+    # This ensures that entity names are unique, which is crucial for the graph's integrity.
+    graph_db_manager.execute_query(
+        "CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.name IS UNIQUE"
+    )
+    logger.info("Database constraints for conversation entities are set up.")
+
 # --- Tokenizer for Summarization ---
 # Using a global tokenizer to avoid reloading it every time
 try:

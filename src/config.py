@@ -38,13 +38,10 @@ NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 
-# --- Graph and Text Configuration ---
-CHUNK_SIZE = 300
-CHUNK_OVERLAP = 0
+# --- Conversation Configuration ---
 CONVERSATION_TOKEN_THRESHOLD = 20000
 
 # --- Milvus Configuration ---
 MILVUS_URI = "./milvus_data/milvus.db"
-DOC_COLLECTION_NAME = "knowledge_graph_chunks"
 CONVERSATION_COLLECTION_NAME = "conversation_snippets"
 VECTOR_DIMENSION = 1024  # For text-embedding-qwen3-embedding-0.6b

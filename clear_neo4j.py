@@ -11,19 +11,19 @@ async def clear_database():
 
     try:
         logger.info("Connecting to Neo4j to clear the database...")
-        
+
         # The connection is already established by the singleton instance.
         # We just need to execute the query.
-        
+
         query = "MATCH (n) DETACH DELETE n"
         logger.info(f"Executing query: {query}")
-        
+
         result = graph_db_manager.execute_query(query)
-        
+
         # To get the count of deleted nodes, a different query would be needed
         # like "MATCH (n) DETACH DELETE n RETURN count(n)".
         # For simplicity, we just confirm execution.
-        
+
         # The execute_query returns a list of records or None.
         # A successful DETACH DELETE returns an empty list.
         if result is not None:
