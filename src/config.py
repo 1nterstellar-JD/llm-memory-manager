@@ -33,12 +33,18 @@ LLM_MODEL_NAME = "Qwen3-8B"
 EMBEDDING_MODEL_NAME = "Qwen3-Embedding-0.6B"
 # EMBEDDING_MODEL_NAME = "text-embedding-qwen3-embedding-0.6b"
 
+# --- Neo4j Configuration ---
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+
 # --- Graph and Text Configuration ---
-GRAPH_OUTPUT_PATH = "output/knowledge_graph.gml"
 CHUNK_SIZE = 300
 CHUNK_OVERLAP = 0
+CONVERSATION_TOKEN_THRESHOLD = 20000
 
 # --- Milvus Configuration ---
 MILVUS_URI = "./milvus_data/milvus.db"
-COLLECTION_NAME = "knowledge_graph_chunks"
+DOC_COLLECTION_NAME = "knowledge_graph_chunks"
+CONVERSATION_COLLECTION_NAME = "conversation_snippets"
 VECTOR_DIMENSION = 1024  # For text-embedding-qwen3-embedding-0.6b

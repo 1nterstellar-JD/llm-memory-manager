@@ -1,10 +1,10 @@
-import networkx as nx
 import json
 import asyncio
 from typing import List
 from langchain_core.documents import Document
 from src.config import llm_client, LLM_MODEL_NAME
 from src.logger import logger
+from src.graph_db_manager import graph_db_manager
 
 # --- Concurrency & Retry Parameters ---
 CONCURRENCY_LIMIT = 10
@@ -13,7 +13,7 @@ INITIAL_BACKOFF = 1.0  # seconds
 semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
 # -------------------------------------
 
-async def extract_entities_with_llm(text_chunk: str, chunk_index: int, total_chunks: int):
+async def extract_entities_with_llm(text_chunk: str, chunk_id: int, total_chunks: int):
     """Asynchronously uses OpenAI to extract entities, with concurrency limiting and retry logic."""
     async with semaphore:
         prompt = f"""Please extract the key entities (people, organizations, projects, concepts) from the following text.
@@ -39,26 +39,49 @@ async def extract_entities_with_llm(text_chunk: str, chunk_index: int, total_chu
                 )
                 result = json.loads(response.choices[0].message.content)
                 entities = result.get("entities", [])
-                logger.info(f"Processed chunk {chunk_index + 1}/{total_chunks} -> Found entities: {entities}")
-                return chunk_index, entities  # Success
+                logger.info(f"Processed chunk {chunk_id + 1}/{total_chunks} -> Found entities: {entities}")
+                return chunk_id, entities
             except Exception as e:
                 if i < MAX_RETRIES - 1:
-                    logger.warning(f"Chunk {chunk_index+1} failed with error: {e}. Retrying in {backoff:.1f}s...")
+                    logger.warning(f"Chunk {chunk_id+1} failed with error: {e}. Retrying in {backoff:.1f}s...")
                     await asyncio.sleep(backoff)
-                    backoff *= 2  # Exponential backoff
+                    backoff *= 2
                 else:
-                    logger.error(f"Chunk {chunk_index+1} failed after {MAX_RETRIES} attempts. Final error: {e}")
-                    return chunk_index, []  # All retries failed
+                    logger.error(f"Chunk {chunk_id+1} failed after {MAX_RETRIES} attempts. Final error: {e}")
+                    return chunk_id, []
         
-        return chunk_index, [] # Should not be reached, but as a fallback
+        return chunk_id, []
+
+def setup_database_constraints():
+    """Sets up unique constraints and indexes in the Neo4j database for optimization."""
+    # Constraint for Chunk nodes
+    graph_db_manager.execute_query(
+        "CREATE CONSTRAINT IF NOT EXISTS FOR (c:Chunk) REQUIRE c.chunk_id IS UNIQUE"
+    )
+    # Constraint for Entity nodes
+    graph_db_manager.execute_query(
+        "CREATE CONSTRAINT IF NOT EXISTS FOR (e:Entity) REQUIRE e.name IS UNIQUE"
+    )
+    logger.info("Database constraints and indexes are set up.")
 
 async def build_graph_from_chunks(chunks: List[Document]):
-    """Builds a knowledge graph from a list of Document objects asynchronously."""
-    G = nx.DiGraph()
+    """Builds a knowledge graph in Neo4j from a list of Document objects asynchronously."""
     
+    # First, create all chunk nodes
     for i, chunk in enumerate(chunks):
-        G.add_node(f"chunk_{i}", type="chunk", content=chunk.page_content, metadata=chunk.metadata)
+        query = """
+        MERGE (c:Chunk {chunk_id: $chunk_id})
+        ON CREATE SET c.content = $content, c.metadata = $metadata
+        """
+        parameters = {
+            "chunk_id": f"chunk_{i}",
+            "content": chunk.page_content,
+            "metadata": json.dumps(chunk.metadata) # Store metadata as a JSON string
+        }
+        graph_db_manager.execute_query(query, parameters)
+    logger.info(f"Successfully created {len(chunks)} chunk nodes in Neo4j.")
 
+    # Second, extract entities and create entity nodes and relationships
     tasks = [
         extract_entities_with_llm(chunk.page_content, i, len(chunks))
         for i, chunk in enumerate(chunks)
@@ -68,24 +91,35 @@ async def build_graph_from_chunks(chunks: List[Document]):
 
     for chunk_index, raw_entities in results:
         if raw_entities:
-            # Normalize and filter entities
-            normalized_entities = set()
-            for entity in raw_entities:
-                if isinstance(entity, str):
-                    # Normalize: lowercase and strip whitespace
-                    normalized = entity.lower().strip()
-                    if normalized: # Ensure not empty after stripping
-                        normalized_entities.add(normalized)
-                else:
-                    logger.warning(f"Ignoring non-string entity '{entity}' in chunk {chunk_index+1}")
+            normalized_entities = {
+                entity.lower().strip() for entity in raw_entities if isinstance(entity, str) and entity.lower().strip()
+            }
             
-            # Add normalized entities to the graph
-            for entity in sorted(list(normalized_entities)):
-                if not G.has_node(entity):
-                    G.add_node(entity, type="entity")
-                G.add_edge(f"chunk_{chunk_index}", entity, type="mentions")
+            for entity_name in sorted(list(normalized_entities)):
+                # Create entity node
+                graph_db_manager.execute_query(
+                    "MERGE (e:Entity {name: $name})", {"name": entity_name}
+                )
+                # Create relationship from chunk to entity
+                query = """
+                MATCH (c:Chunk {chunk_id: $chunk_id})
+                MATCH (e:Entity {name: $entity_name})
+                MERGE (c)-[:MENTIONS]->(e)
+                """
+                parameters = {"chunk_id": f"chunk_{chunk_index}", "entity_name": entity_name}
+                graph_db_manager.execute_query(query, parameters)
 
+    logger.info("Entity extraction and relationship creation complete.")
+
+    # Third, create sequential relationships between chunks
     for i in range(len(chunks) - 1):
-        G.add_edge(f"chunk_{i}", f"chunk_{i+1}", type="sequential")
-            
-    return G
+        query = """
+        MATCH (c1:Chunk {chunk_id: $chunk_id_1})
+        MATCH (c2:Chunk {chunk_id: $chunk_id_2})
+        MERGE (c1)-[:SEQUENTIAL]->(c2)
+        """
+        parameters = {"chunk_id_1": f"chunk_{i}", "chunk_id_2": f"chunk_{i+1}"}
+        graph_db_manager.execute_query(query, parameters)
+
+    logger.info("Sequential relationships between chunks created.")
+    return True # Indicate success

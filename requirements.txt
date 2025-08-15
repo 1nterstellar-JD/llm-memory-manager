@@ -1,5 +1,5 @@
 openai
-networkx
+neo4j
 langchain-text-splitters
 langchain-experimental
 langchain-openai
@@ -10,3 +10,4 @@ numpy
 nltk
 rank-bm25
 jieba
+tiktoken

@@ -1,14 +1,16 @@
-import networkx as nx
 import numpy as np
 import asyncio
 import jieba
+import json
 from rank_bm25 import BM25Okapi
 
 from src.config import embedding_client, EMBEDDING_MODEL_NAME
 from src.logger import logger
-from src.vector_store import vector_store
+from src.vector_store import doc_vector_store, conversation_vector_store
+from src.graph_db_manager import graph_db_manager
 
 # --- BM25 Retriever Cache ---
+# We cache the model based on a graph state indicator (e.g., node count)
 _bm25_cache = {}
 # ---------------------------
 
@@ -23,56 +25,70 @@ async def get_embedding_from_api(text: str, model: str):
         logger.error(f"Error getting embedding from API: {e}")
         return None
 
-async def sync_embeddings_with_vector_store(G: nx.Graph):
-    """Ensures all chunk nodes in the graph have their embeddings in the vector store."""
-    await vector_store.is_ready.wait()
-    logger.info("Syncing graph chunks with the vector store...")
+async def sync_embeddings_with_vector_store():
+    """Ensures all chunk nodes in Neo4j have their embeddings in the vector store."""
+    await doc_vector_store.is_ready.wait()
+    logger.info("Syncing Neo4j chunks with the document vector store...")
     
-    all_chunk_nodes = {
-        node_id: data.get('content', '')
-        for node_id, data in G.nodes(data=True)
-        if data.get('type') == 'chunk'
-    }
-
-    if not all_chunk_nodes:
+    # Fetch all chunk nodes from Neo4j
+    query = "MATCH (c:Chunk) RETURN c.chunk_id AS chunk_id, c.content AS content"
+    result = graph_db_manager.execute_query(query)
+    if not result:
+        logger.warning("Could not fetch chunks from Neo4j.")
         return
 
-    node_ids_list = list(all_chunk_nodes.keys())
-    existing_ids = await vector_store.check_exists(node_ids_list)
-    
-    chunks_to_process = {node_id: content for node_id, content in all_chunk_nodes.items() if node_id not in existing_ids}
+    all_chunk_nodes = {record["chunk_id"]: record["content"] for record in result}
+    if not all_chunk_nodes:
+        logger.info("No chunks in Neo4j to sync.")
+        return
 
-    if not chunks_to_process:
+    # In the new vector store, IDs are integers.
+    node_ids_to_check = []
+    for node_id in all_chunk_nodes.keys():
+        try:
+            node_ids_to_check.append(int(node_id.split('_')[-1]))
+        except (ValueError, IndexError):
+            continue
+
+    existing_ids = await doc_vector_store.check_exists(node_ids_to_check)
+    
+    insert_data = []
+    tasks = []
+    id_list_for_embedding = []
+
+    for node_id, content in all_chunk_nodes.items():
+        try:
+            int_id = int(node_id.split('_')[-1])
+            if int_id not in existing_ids:
+                id_list_for_embedding.append(int_id)
+                tasks.append(get_embedding_from_api(content, EMBEDDING_MODEL_NAME))
+        except (ValueError, IndexError):
+            continue
+
+    if not tasks:
         logger.info("All chunk embeddings are already in the vector store.")
         return
 
-    logger.info(f"Found {len(chunks_to_process)} chunks needing embedding.")
-    tasks = [get_embedding_from_api(content, EMBEDDING_MODEL_NAME) for content in chunks_to_process.values()]
+    logger.info(f"Found {len(tasks)} chunks needing embedding.")
     embeddings = await asyncio.gather(*tasks)
 
-    insert_data = []
-    for node_id, embedding in zip(chunks_to_process.keys(), embeddings):
+    for int_id, embedding in zip(id_list_for_embedding, embeddings):
         if embedding:
-            int_id = int(node_id.split('_')[-1])
-            insert_data.append((int_id, embedding))
+            insert_data.append({"id": int_id, "embedding": embedding})
     
     if insert_data:
-        await vector_store.insert_batch(insert_data)
-    logger.info("Sync with vector store complete.")
+        await doc_vector_store.insert_batch(insert_data)
+    logger.info("Sync with document vector store complete.")
 
-def _initialize_bm25(G: nx.Graph):
-    """Initializes and caches a BM25 model using jieba for Chinese tokenization."""
-    graph_id = id(G)
-    if graph_id in _bm25_cache:
-        return _bm25_cache[graph_id]
+def _initialize_bm25():
+    """Initializes and caches a BM25 model using data from Neo4j."""
+    query = "MATCH (c:Chunk) RETURN c.chunk_id AS chunk_id, c.content AS content"
+    result = graph_db_manager.execute_query(query)
+    if not result:
+        logger.warning("Could not fetch chunks from Neo4j for BM25.")
+        return None
 
-    logger.info("Initializing BM25 model with jieba for keyword search...")
-    chunk_docs = {
-        node_id: list(jieba.cut(data.get('content', '')))
-        for node_id, data in G.nodes(data=True)
-        if data.get('type') == 'chunk'
-    }
-    
+    chunk_docs = {record["chunk_id"]: list(jieba.cut(record["content"])) for record in result}
     if not chunk_docs:
         return None
 
@@ -80,89 +96,85 @@ def _initialize_bm25(G: nx.Graph):
     tokenized_corpus = [chunk_docs[node_id] for node_id in node_id_corpus]
     
     bm25 = BM25Okapi(tokenized_corpus)
-    _bm25_cache[graph_id] = (bm25, node_id_corpus)
-    logger.info("BM25 model initialized.")
+    logger.info("BM25 model initialized with data from Neo4j.")
     return bm25, node_id_corpus
 
 async def retrieve_context(
-    query: str, G: nx.Graph, top_k: int = 3, search_depth: int = 1
+    query: str, top_k: int = 3, search_depth: int = 1
 ) -> str:
-    """Retrieves context using a hybrid search (Vector + Keyword with jieba) and graph traversal."""
-    if not G or G.number_of_nodes() == 0:
-        return "Error: Knowledge graph not loaded or is empty."
+    """Retrieves context using a hybrid search (Vector + Keyword) and graph traversal in Neo4j."""
 
-    await sync_embeddings_with_vector_store(G)
-
-    # --- 1. Vector Search ---
+    # --- 1. Hybrid Search for Documents ---
     query_embedding = await get_embedding_from_api(query, model=EMBEDDING_MODEL_NAME)
     if query_embedding is None:
         return "Error: Could not generate embedding for the query."
-    vector_search_ids = await vector_store.search(query_embedding, top_k)
-    vector_nodes = {f"chunk_{i}" for i in vector_search_ids}
-    logger.info(f"Vector search found nodes: {vector_nodes}")
 
-    # --- 2. Keyword Search (BM25 with jieba) ---
-    bm25_result = _initialize_bm25(G)
-    keyword_nodes = set()
+    # 1a. Vector Search for Documents
+    doc_search_results = await doc_vector_store.search(query_embedding, top_k)
+    doc_vector_ids = [hit['id'] for hit in doc_search_results]
+    doc_vector_nodes = {f"chunk_{i}" for i in doc_vector_ids}
+    logger.info(f"Document vector search found nodes: {doc_vector_nodes}")
+
+    # 1b. Keyword Search for Documents
+    bm25_result = _initialize_bm25()
+    doc_keyword_nodes = set()
     if bm25_result:
         bm25, node_id_corpus = bm25_result
         tokenized_query = list(jieba.cut(query))
         doc_scores = bm25.get_scores(tokenized_query)
         top_n_indices = np.argsort(doc_scores)[::-1][:top_k]
-        keyword_nodes = {node_id_corpus[i] for i in top_n_indices}
-        logger.info(f"Keyword search found nodes: {keyword_nodes}")
+        doc_keyword_nodes = {node_id_corpus[i] for i in top_n_indices}
+        logger.info(f"Keyword search found nodes: {doc_keyword_nodes}")
 
-    # --- 3. Combine and Expand ---
-    initial_nodes = vector_nodes.union(keyword_nodes)
+    # --- 2. Graph Traversal for Document Context ---
+    initial_nodes = doc_vector_nodes.union(doc_keyword_nodes)
     if not initial_nodes:
         return "No relevant chunks found for the query."
     logger.info(f"Combined initial-nodes: {initial_nodes}")
 
-    relevant_nodes = set(initial_nodes)
-    for node in initial_nodes:
-        if node in G:
-            subgraph = nx.ego_graph(G, node, radius=search_depth)
-            relevant_nodes.update(subgraph.nodes())
-        else:
-            logger.warning(f"Node {node} found by search but not in graph. Skipping.")
+    # Use Cypher to find all nodes within the search_depth
+    traversal_query = f"""
+    MATCH (start:Chunk)
+    WHERE start.chunk_id IN $start_nodes
+    CALL {{
+        WITH start
+        MATCH (start)-[*0..{search_depth}]-(neighbor)
+        RETURN neighbor
+    }}
+    RETURN DISTINCT neighbor
+    """
 
-    # --- 4. Format Context ---
-    context_parts = []
-    for node_id in relevant_nodes:
-        if G.nodes[node_id].get("type") == "chunk":
-            context_parts.append(G.nodes[node_id].get("content", ""))
+    result = graph_db_manager.execute_query(traversal_query, parameters={"start_nodes": list(initial_nodes)})
+    if not result:
+        return "Could not retrieve context from graph."
 
-    unique_context = "\n---\n".join(sorted(list(set(context_parts)), key=context_parts.index))
-    return unique_context
-
-if __name__ == "__main__":
-    # This is a focused test block to verify the get_embedding_from_api function.
-    # You can run this file directly `python src/retriever.py` to test.
+    # --- 3. Semantic Search for Conversations ---
+    conv_search_results = await conversation_vector_store.search(
+        query_embedding, top_k, output_fields=["text"]
+    )
+    conversation_context_parts = [hit['entity']['text'] for hit in conv_search_results if 'text' in hit['entity']]
     
-    async def test_embedding_api():
-        logger.info("--- Running get_embedding_from_api Test ---")
-        
-        test_text = "Hello, world!"
-        model_name = EMBEDDING_MODEL_NAME
-        
-        logger.info(f"Requesting embedding for: '{test_text}' with model '{model_name}'")
-        
-        embedding = await get_embedding_from_api(test_text, model_name)
-        
-        print("\n--- Test Results ---")
-        if embedding:
-            print(f"Successfully retrieved embedding!")
-            print(f"Vector dimension: {len(embedding)}")
-            print(f"First 5 dimensions: {embedding[:5]}")
-        else:
-            print("Failed to retrieve embedding. Check logs for errors.")
-        print("--- End of Test ---")
+    # --- 4. Combine and Format Context ---
+    final_context = ""
+    if conversation_context_parts:
+        conv_context = "\n---\n".join(conversation_context_parts)
+        final_context += f"Relevant past conversation snippets:\n{conv_context}\n\n"
+        logger.info("Added context from past conversations.")
 
-        # Clean up the client connection
-        await embedding_client.close()
+    doc_context_parts = []
+    if result:
+        for record in result:
+            node = record["neighbor"]
+            # Ensure we only add content from Chunk nodes
+            if "Chunk" in node.labels and "content" in node:
+                doc_context_parts.append(node["content"])
 
-    # Execute the test
-    try:
-        asyncio.run(test_embedding_api())
-    except Exception as e:
-        logger.error(f"An error occurred during the test run: {e}")
+    if doc_context_parts:
+        unique_doc_context = "\n---\n".join(sorted(list(set(doc_context_parts)), key=doc_context_parts.index))
+        final_context += f"Relevant information from documents:\n{unique_doc_context}"
+        logger.info("Added context from documents.")
+
+    if not final_context:
+        return "No relevant information found in documents or past conversations."
+
+    return final_context

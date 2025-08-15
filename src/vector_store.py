@@ -1,50 +1,58 @@
-
 import os
 import asyncio
 from pymilvus.milvus_client import MilvusClient
-from pymilvus import utility, Collection
 from src.logger import logger
-from src.config import MILVUS_URI, COLLECTION_NAME, VECTOR_DIMENSION
+from src.config import (
+    MILVUS_URI,
+    DOC_COLLECTION_NAME,
+    CONVERSATION_COLLECTION_NAME,
+    VECTOR_DIMENSION
+)
 
-class VectorStore:
-    def __init__(self):
-        db_dir = os.path.dirname(MILVUS_URI)
-        if db_dir and not os.path.exists(db_dir):
-            os.makedirs(db_dir, exist_ok=True)
-            logger.info(f"Created Milvus data directory: {db_dir}")
-        self._client = MilvusClient(uri=MILVUS_URI)
-        self._collection_name = COLLECTION_NAME
+class VectorCollectionManager:
+    def __init__(self, collection_name: str, id_type: str = "int", id_max_length: int = 65535, dynamic_field: bool = False):
+        self._collection_name = collection_name
+        self._id_type = id_type
+        self._id_max_length = id_max_length
+        self._enable_dynamic_field = dynamic_field
+        # Note: The client is shared across all instances
+        if not hasattr(VectorCollectionManager, '_client'):
+            db_dir = os.path.dirname(MILVUS_URI)
+            if db_dir and not os.path.exists(db_dir):
+                os.makedirs(db_dir, exist_ok=True)
+                logger.info(f"Created Milvus data directory: {db_dir}")
+            VectorCollectionManager._client = MilvusClient(uri=MILVUS_URI)
+
         self.is_ready = asyncio.Event()
 
     async def setup(self):
-        """Asynchronously initializes Milvus connection and sets up the collection."""
+        """Initializes Milvus connection and sets up the collection."""
         try:
             if not await asyncio.to_thread(self._client.has_collection, self._collection_name):
-                await self.acreate_collection()
+                await self._create_collection()
             
-            # The new MilvusClient manages collections differently, loading is often implicit
             logger.info(f"Successfully connected to Milvus and ensured collection '{self._collection_name}' exists.")
             self.is_ready.set()
-
         except Exception as e:
-            logger.error(f"Failed to setup Milvus: {e}")
+            logger.error(f"Failed to setup Milvus collection '{self._collection_name}': {e}")
             self.is_ready.clear()
             raise
 
-    async def acreate_collection(self):
-        """Asynchronously creates the Milvus collection with a specific schema."""
+    async def _create_collection(self):
+        """Creates the Milvus collection with a specific schema."""
         try:
             self._client.create_collection(
                 collection_name=self._collection_name,
                 dimension=VECTOR_DIMENSION,
                 primary_field_name="id",
                 vector_field_name="embedding",
-                id_type="int",
-                metric_type="L2"
+                id_type=self._id_type,
+                max_length=self._id_max_length,
+                metric_type="L2",
+                enable_dynamic_field=self._enable_dynamic_field
             )
-            logger.info(f"Collection '{self._collection_name}' created.")
+            logger.info(f"Collection '{self._collection_name}' created (dynamic fields: {self._enable_dynamic_field}).")
             
-            # Create index right after collection creation
             index_params = self._client.prepare_index_params(
                 field_name="embedding",
                 index_type="IVF_FLAT",
@@ -52,28 +60,23 @@ class VectorStore:
                 params={"nlist": 128}
             )
             self._client.create_index(self._collection_name, index_params)
-            logger.info("Index created for embedding field.")
-
+            logger.info(f"Index created for '{self._collection_name}'.")
         except Exception as e:
-            logger.error(f"Failed to create collection or index: {e}")
+            logger.error(f"Failed to create collection or index for '{self._collection_name}': {e}")
 
-    async def insert(self, node_id: int, vector: list):
-        """Asynchronously inserts a single vector into the collection."""
-        await self.insert_batch([(node_id, vector)])
-
-    async def insert_batch(self, data: list[tuple[int, list]]):
-        """Asynchronously inserts a batch of vectors into the collection."""
+    async def insert_batch(self, data: list):
+        """Inserts a batch of vectors. Data format depends on id_type."""
         await self.is_ready.wait()
         if not data:
             return
         try:
-            entities = [{"id": node_id, "embedding": vector} for node_id, vector in data]
-            await asyncio.to_thread(self._client.insert, collection_name=self._collection_name, data=entities)
+            # Data is expected to be a list of dicts: [{"id": ..., "embedding": ...}]
+            await asyncio.to_thread(self._client.insert, collection_name=self._collection_name, data=data)
         except Exception as e:
-            logger.error(f"Failed to batch insert vectors: {e}")
+            logger.error(f"Failed to batch insert into '{self._collection_name}': {e}")
 
-    async def search(self, query_vector: list, top_k: int) -> list:
-        """Asynchronously searches for the most similar vectors."""
+    async def search(self, query_vector: list, top_k: int, output_fields: list = ["id"]) -> list:
+        """Searches for the most similar vectors."""
         await self.is_ready.wait()
         try:
             results = await asyncio.to_thread(
@@ -81,66 +84,38 @@ class VectorStore:
                 collection_name=self._collection_name,
                 data=[query_vector],
                 limit=top_k,
-                output_fields=["id"]
+                output_fields=output_fields
             )
-            return [hit['id'] for hit in results[0]]
+            return results[0]  # Return list of hits
         except Exception as e:
-            logger.error(f"Failed to search vectors: {e}")
+            logger.error(f"Failed to search in '{self._collection_name}': {e}")
             return []
 
-    async def count(self) -> int:
-        """Asynchronously returns the number of vectors in the collection."""
+    async def check_exists(self, ids: list) -> set:
+        """Checks which of the given ids exist in the collection."""
         await self.is_ready.wait()
+        if not ids:
+            return set()
         try:
-            # This is a synchronous call, but we await it to ensure setup is complete
-            res = await asyncio.to_thread(self._client.query, self._collection_name, "id != 0", output_fields=["count(*)"])
-            return res[0]['count(*)']
-        except Exception as e:
-            logger.error(f"Failed to count entities: {e}")
-            return 0
-
-    async def check_exists(self, node_ids: list[int]) -> list[int]:
-        """Asynchronously checks which of the given node_ids exist in the collection."""
-        await self.is_ready.wait()
-        if not node_ids:
-            return []
-        try:
-            ids_to_check = [int(i.split('_')[-1]) for i in node_ids]
-            expr = f"id in {ids_to_check}"
+            expr = f"id in {ids}"
             results = await asyncio.to_thread(self._client.query, self._collection_name, expr, output_fields=["id"])
-            # The node_id in the graph is like 'chunk_123', but in milvus it's 123. We need to reconstruct the string.
-            existing_ids_int = {res['id'] for res in results}
-            return [f"chunk_{i}" for i in existing_ids_int]
+            return {res['id'] for res in results}
         except Exception as e:
-            logger.error(f"Failed to check existence for nodes: {e}")
-            return []
+            logger.error(f"Failed to check existence in '{self._collection_name}': {e}")
+            return set()
 
-    async def close(self):
-        """Closes the Milvus client connection."""
-        if self.is_ready.is_set():
-            logger.info("Closing Milvus client connection.")
-            await asyncio.to_thread(self._client.close)
-            self.is_ready.clear()
+    @classmethod
+    async def close_all(cls):
+        """Closes the shared Milvus client connection."""
+        if hasattr(cls, '_client'):
+            logger.info("Closing shared Milvus client connection.")
+            await asyncio.to_thread(cls._client.close)
 
-# Singleton instance
-vector_store = VectorStore()
-
-async def main():
-    # Example usage
-    await vector_store.setup()
-    logger.info(f"Number of vectors in store: {await vector_store.count()}")
-    
-    import numpy as np
-    dummy_id = 1
-    dummy_vec = list(np.random.rand(VECTOR_DIMENSION))
-    
-    await vector_store.insert(dummy_id, dummy_vec)
-    await asyncio.sleep(1) # Give time for flush
-    
-    logger.info(f"Number of vectors in store after insert: {await vector_store.count()}")
-    
-    results = await vector_store.search(dummy_vec, top_k=1)
-    logger.info(f"Search results: {results}")
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# Singleton instances for each collection
+doc_vector_store = VectorCollectionManager(DOC_COLLECTION_NAME, id_type="int")
+conversation_vector_store = VectorCollectionManager(
+    CONVERSATION_COLLECTION_NAME,
+    id_type="varchar",
+    id_max_length=1000, # A timestamp-based ID won't be this long
+    dynamic_field=True
+)
