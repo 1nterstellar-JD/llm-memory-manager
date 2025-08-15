@@ -54,11 +54,17 @@ def query_graph_with_entities(entities: list[str]) -> str:
     
     all_facts = set()
     for entity in entities:
-        # This query finds the entity and returns all its direct relationships and neighbors
-        # It correctly reads the 'type' property from the 'RELATED_TO' relationship
+        # This query finds entities whose names contain the given entity string
+        # and returns their direct relationships. It ranks exact matches higher
+        # than partial matches to return the most relevant facts first.
         query = """
-        MATCH (e:Entity {name: $entity_name})-[r:RELATED_TO]-(neighbor:Entity)
+        MATCH (e:Entity)-[r:RELATED_TO]-(neighbor:Entity)
+        WHERE e.name CONTAINS $entity_name
+        WITH e, r, neighbor,
+             CASE WHEN e.name = $entity_name THEN 2 ELSE 1 END AS score
         RETURN e.name AS entity1, r.type AS relation, neighbor.name AS entity2
+        ORDER BY score DESC, e.name
+        LIMIT 10
         """
         results = graph_db_manager.execute_query(query, {"entity_name": entity})
 
