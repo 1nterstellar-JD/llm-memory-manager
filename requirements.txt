@@ -1,13 +1,7 @@
 openai
 neo4j
-langchain-text-splitters
-langchain-experimental
-langchain-openai
 python-dotenv
 loguru
 pymilvus
 numpy
-nltk
-rank-bm25
-jieba
 tiktoken
