@@ -55,9 +55,10 @@ def query_graph_with_entities(entities: list[str]) -> str:
     all_facts = set()
     for entity in entities:
         # This query finds the entity and returns all its direct relationships and neighbors
+        # It correctly reads the 'type' property from the 'RELATED_TO' relationship
         query = """
-        MATCH (e:Entity {name: $entity_name})-[r]-(neighbor:Entity)
-        RETURN e.name AS entity1, type(r) AS relation, neighbor.name AS entity2
+        MATCH (e:Entity {name: $entity_name})-[r:RELATED_TO]-(neighbor:Entity)
+        RETURN e.name AS entity1, r.type AS relation, neighbor.name AS entity2
         """
         results = graph_db_manager.execute_query(query, {"entity_name": entity})
 
