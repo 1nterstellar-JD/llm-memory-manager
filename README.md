@@ -1,5 +1,7 @@
 # LLM Tool-Calling Agent with Long-Term Memory
 
+[Read this document in Chinese (阅读中文文档)](README_zh.md)
+
 This project provides an advanced framework for building AI agents that can use tools and have a persistent, long-term memory. It overcomes the standard limitations of finite context windows by implementing a sophisticated hybrid memory architecture, allowing the agent to remember past conversations, learn facts, and retrieve relevant context to make decisions.
 
 The entire system is built with Python's `asyncio` to handle I/O-intensive operations like API calls and database interactions efficiently, ensuring a responsive user experience.
