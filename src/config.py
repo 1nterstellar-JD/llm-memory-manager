@@ -15,23 +15,23 @@ if not OPENAI_BASE_URL:
     raise ValueError("OPENAI_BASE_URL not found in .env file")
 
 # --- Clients ---
-# llm_client = AsyncAzureOpenAI(
-#     api_version="2024-12-01-preview",
-#     api_key=OPENAI_API_KEY,
-#     azure_endpoint=OPENAI_BASE_URL,
-# )
-llm_client = AsyncOpenAI(
+llm_client = AsyncAzureOpenAI(
+    api_version="2024-12-01-preview",
     api_key=OPENAI_API_KEY,
-    base_url=OPENAI_BASE_URL,
+    azure_endpoint=OPENAI_BASE_URL,
 )
+# llm_client = AsyncOpenAI(
+#     api_key=OPENAI_API_KEY,
+#     base_url=OPENAI_BASE_URL,
+# )
 
 embedding_client = AsyncOpenAI(api_key=OPENAI_API_KEY, base_url=EMBEDDING_MODEL_URL)
 
 # --- Model Names ---
-# LLM_MODEL_NAME = "gpt4o"
-LLM_MODEL_NAME = "Qwen3-8B"
-EMBEDDING_MODEL_NAME = "Qwen3-Embedding-0.6B"
-# EMBEDDING_MODEL_NAME = "text-embedding-qwen3-embedding-0.6b"
+LLM_MODEL_NAME = "gpt4o"
+# LLM_MODEL_NAME = "Qwen3-8B"
+# EMBEDDING_MODEL_NAME = "Qwen3-Embedding-0.6B"
+EMBEDDING_MODEL_NAME = "text-embedding-qwen3-embedding-0.6b"
 
 # --- Neo4j Configuration ---
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")

@@ -36,7 +36,16 @@ class ContextManager:
         token_count = count_tokens_in_messages(self.history)
         if token_count > CONVERSATION_TOKEN_THRESHOLD:
             summary = await summarize_conversation(self.history)
+            # We filter out tool-related messages from the summary to keep it clean.
+            history_to_summarize = [
+                m
+                for m in self.history
+                if m.get("role") in ["user", "assistant"] and m.get("content")
+            ]
+            summary = await summarize_conversation(history_to_summarize)
+
             if "Error:" not in summary:
+                # Replace the history with a summary message
                 self.history = [
                     {
                         "role": "system",
@@ -53,33 +62,107 @@ class ContextManager:
         self.history.append({"role": "user", "content": query})
         logger.info(f"Added user message to history: '{query}'")
 
-    async def add_assistant_message(self, answer: str):
+    async def add_assistant_message(self, message: Any):
         """
-        Adds an assistant's message to the history and triggers long-term memory updates.
+        Adds an assistant's message to the history. If it's the final text answer,
+        it also triggers long-term memory updates.
+
+        Args:
+            message (Any): Can be a string (for final answers) or a message object
+                         (e.g., containing tool_calls).
         """
-        # 1. Add assistant answer to history
-        self.history.append({"role": "assistant", "content": answer})
+        # 1. Convert message to standard dict format and add to history
+        if isinstance(message, str):
+            assistant_message = {"role": "assistant", "content": message}
+        else:  # It's likely a ChatCompletionMessage object
+            assistant_message = message.model_dump()
+
+        self.history.append(assistant_message)
         logger.info("Added assistant message to history.")
 
-        # 2. Get the last turn (user query + AI answer)
-        last_turn = self.history[-2:]
-        if not (len(last_turn) == 2 and last_turn[0]["role"] == "user"):
-            logger.warning("Could not process last turn for memory update.")
-            return
+        # 2. If this is a final answer (not a tool call), update long-term memory.
+        if not assistant_message.get("tool_calls"):
+            # Get the last full turn for memory processing.
+            # This is more complex now with tool calls, so we find the last user message
+            # and the final assistant answer.
+            last_user_msg_index = -1
+            for i in range(len(self.history) - 2, -1, -1):
+                if self.history[i]["role"] == "user":
+                    last_user_msg_index = i
+                    break
 
-        # 3. Update long-term memory (Graph and Vector Store)
-        await process_conversation(last_turn)
+            if last_user_msg_index != -1:
+                # The turn includes the user message, any tool interactions, and the final answer.
+                last_turn = self.history[last_user_msg_index:]
+                await self.update_long_term_memory(last_turn)
+            else:
+                logger.warning(
+                    "Could not find last user message to form a complete turn."
+                )
 
+    async def add_tool_response(self, tool_call_id: str, content: str):
+        """
+        Adds a tool's response message to the history.
+        """
+        message = {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": content,
+        }
+        self.history.append(message)
+        logger.info(f"Added tool response for call ID {tool_call_id}.")
+
+    async def update_long_term_memory(self, turn_messages: List[Dict[str, Any]]):
+        """
+        Processes a list of messages representing a full turn and updates the
+        Graph and Vector Stores.
+        """
+        logger.info(
+            f"Updating long-term memory for a turn with {len(turn_messages)} messages."
+        )
+
+        # 1. Update Knowledge Graph
+        # We combine the text content to extract relationships from the full context of the turn.
+        turn_text_content = " ".join(
+            [str(msg.get("content")) for msg in turn_messages if msg.get("content")]
+        )
+        await process_conversation([{"role": "user", "content": turn_text_content}])
+
+        # 2. Update Vector Store
         try:
-            query = last_turn[0]["content"]
-            turn_text = f"User: {query}\nAssistant: {answer}"
+            # We create a single embedding for the entire turn to capture its full context.
+            query = next(
+                (msg["content"] for msg in turn_messages if msg["role"] == "user"), ""
+            )
+            answer = next(
+                (
+                    msg["content"]
+                    for msg in turn_messages
+                    if msg["role"] == "assistant" and msg.get("content")
+                ),
+                "",
+            )
+
+            if not query or not answer:
+                logger.warning(
+                    "Could not find user query or assistant answer in turn, skipping vector store update."
+                )
+                return
+
+            turn_text_for_embedding = f"User: {query}\nAssistant: {answer}"
             turn_embedding = await get_embedding_from_api(
-                turn_text, EMBEDDING_MODEL_NAME
+                turn_text_for_embedding, EMBEDDING_MODEL_NAME
             )
             if turn_embedding:
                 turn_id = f"{int(time.time())}-{len(self.history)}"
                 await conversation_vector_store.insert_batch(
-                    [{"id": turn_id, "embedding": turn_embedding, "text": turn_text}]
+                    [
+                        {
+                            "id": turn_id,
+                            "embedding": turn_embedding,
+                            "text": turn_text_for_embedding,
+                        }
+                    ]
                 )
                 logger.info(f"Stored conversation turn '{turn_id}' in vector store.")
         except Exception as e:
@@ -88,58 +171,70 @@ class ContextManager:
     @property
     async def messages(self) -> List[Dict[str, Any]]:
         """
-        Constructs the list of messages to be sent to the LLM, including retrieved context.
-        This is the property that will be passed to the OpenAI client.
+        Constructs the list of messages for a tool-calling LLM, including retrieved context.
         """
-        if not self.history or self.history[-1]["role"] != "user":
-            logger.warning(
-                "Cannot generate messages: history is empty or last message is not from user."
-            )
+        if not self.history:
+            return []
+
+        # The last message should be from the user to trigger a response.
+        if self.history[-1]["role"] != "user":
+            logger.warning("Last message is not from user, will not generate response.")
             return self.history
 
         query = self.history[-1]["content"]
 
-        # 1. Retrieve context from memory
+        # 1. Retrieve context from long-term memory (Graph + Vector)
         logger.info(f"Retrieving context for query: '{query}'")
-        context = await retrieve_context(query)
-        if "Error:" in context:
-            logger.error(context)
-            context = ""  # Proceed without context on error
+        retrieved_context = await retrieve_context(query)
+        if "Error:" in retrieved_context:
+            logger.error(retrieved_context)
+            retrieved_context = ""  # Proceed without context on error
 
-        if context:
+        if retrieved_context:
             logger.info(
-                f"--- Retrieved Context ---\n{context}\n--------------------------"
+                f"--- Retrieved Context ---\n{retrieved_context}\n--------------------------"
             )
 
-        # 2. Construct the prompt messages
-        prompt_messages = []
-        if context:
-            prompt_messages.append(
-                {
-                    "role": "system",
-                    "content": f"Please use the following context to answer the user's question.\n\nContext:\n{context}",
-                }
-            )
-        
-        # Include recent history for short-term memory.
-        # For now, we add the full history. A more advanced implementation
-        # could be more selective.
-        prompt_messages.extend(self.history)
+        # 2. Construct the system prompt for the tool-calling agent
+        # This prompt is now more explicit about the agent's capabilities and available information.
+        system_prompt_parts = [
+            "You are a helpful assistant that has access to a set of tools.",
+            "You can use these tools to answer questions and perform tasks.",
+        ]
 
-        # A common pattern is to have one system message. Let's ensure that.
-        # We will merge our context system message with any existing system message (e.g., from summarization)
-        
-        final_messages = []
-        system_contents = []
-        
-        for msg in prompt_messages:
-            if msg["role"] == "system":
-                system_contents.append(msg["content"])
-            else:
+        # Add any summary of the conversation history as a system-level note.
+        # This is more effective than having it as a separate message.
+        summary_message = next(
+            (
+                msg
+                for msg in self.history
+                if msg["role"] == "system" and "summary" in msg["content"]
+            ),
+            None,
+        )
+        if summary_message:
+            system_prompt_parts.append(
+                f"\n--- Summary of Previous Conversation ---\n{summary_message['content']}"
+            )
+
+        # Add the retrieved context (from KG and Vector DB) as background information.
+        if retrieved_context:
+            system_prompt_parts.append(
+                f"\n--- Background Information ---\n"
+                f"Here is some information retrieved from long-term memory that might be relevant to the user's query. "
+                f"Use this to inform your decisions and tool usage.\n\n{retrieved_context}"
+            )
+
+        final_system_prompt = "\n".join(system_prompt_parts)
+
+        # 3. Construct the final list of messages
+        # We will have one system message, followed by the conversational history.
+        final_messages = [{"role": "system", "content": final_system_prompt}]
+
+        # Add the rest of the history, filtering out the old summary message
+        # as it's now part of the main system prompt.
+        for msg in self.history:
+            if not (msg["role"] == "system" and "summary" in msg["content"]):
                 final_messages.append(msg)
-
-        if system_contents:
-            final_system_message = "\n\n---\n\n".join(system_contents)
-            final_messages.insert(0, {"role": "system", "content": final_system_message})
 
         return final_messages

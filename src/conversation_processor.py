@@ -186,6 +186,7 @@ async def process_conversation(messages: List[Dict[str, Any]]):
 def count_tokens_in_messages(messages: List[Dict[str, Any]]) -> int:
     """
     Calculates the total number of tokens for a list of messages using the pre-loaded tokenizer.
+    This version is robust against messages with None content (e.g., tool call requests).
 
     Args:
         messages (List[Dict[str, Any]]): A list of message dictionaries.
@@ -195,7 +196,9 @@ def count_tokens_in_messages(messages: List[Dict[str, Any]]) -> int:
     """
     token_count = 0
     for message in messages:
-        token_count += len(tokenizer.encode(message.get("content", "")))
+        # Ensure content is a string. If content is None (like in a tool call), treat it as an empty string.
+        content = message.get("content") or ""
+        token_count += len(tokenizer.encode(content))
     return token_count
 
 
