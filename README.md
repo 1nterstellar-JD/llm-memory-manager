@@ -57,6 +57,11 @@ By combining these two memories, the system can retrieve both specific facts and
                                +---------------------------+
 ```
 
+While the diagram above shows the flow of data, the code is orchestrated by the `ContextManager` class (`src/context_manager.py`). This class acts as the central hub, managing the conversation state and coordinating with all other modules:
+- It uses the **Retriever** (`src/retriever.py`) to fetch relevant context.
+- It calls the **Conversation Processor** (`src/conversation_processor.py`) to update long-term memory.
+- It prepares the final messages for the **LLM** and processes the response.
+
 ## Tech Stack
 
 -   **Core**: Python 3.8+, asyncio
@@ -119,6 +124,7 @@ You can now start chatting with the AI. Type `exit` to quit. The AI will build i
 ├── milvus_data/          # Local Milvus Lite database
 ├── src/                  # Library source code
 │   ├── config.py         # API clients and configuration
+│   ├── context_manager.py  # Orchestrates the entire conversation lifecycle
 │   ├── conversation_processor.py # Extracts facts and summarizes conversations
 │   ├── graph_db_manager.py # Manages connection and queries to Neo4j
 │   ├── logger.py         # Logging configuration
@@ -126,7 +132,7 @@ You can now start chatting with the AI. Type `exit` to quit. The AI will build i
 │   └── vector_store.py   # Wrapper for the Milvus client
 ├── .env                  # (You create this) API keys and DB credentials
 ├── .gitignore
-├── main.py               # Main application entry point
+├── main.py               # Lightweight script to run the ContextManager in a CLI
 ├── requirements.txt      # Dependencies
 └── README.md             # This file
 ```
