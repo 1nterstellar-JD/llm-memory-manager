@@ -5,7 +5,7 @@ from src.config import (
     llm_client,
     LLM_MODEL_NAME,
     EMBEDDING_MODEL_NAME,
-    CONVERSATION_TOKEN_THRESHOLD
+    CONVERSATION_TOKEN_THRESHOLD,
 )
 from src.data_processor import load_and_split_text
 from src.graph_builder import build_graph_from_chunks, setup_database_constraints
@@ -17,15 +17,16 @@ from src.conversation_processor import (
 from src.retriever import (
     retrieve_context,
     sync_embeddings_with_vector_store,
-    get_embedding_from_api
+    get_embedding_from_api,
 )
 from src.vector_store import (
     doc_vector_store,
     conversation_vector_store,
-    VectorCollectionManager
+    VectorCollectionManager,
 )
 from src.graph_db_manager import graph_db_manager
 from src.logger import logger
+
 
 async def process_new_data(source_file: str):
     """Loads text, splits it, and builds the knowledge graph in Neo4j."""
@@ -41,6 +42,7 @@ async def process_new_data(source_file: str):
     logger.success("Data processing and graph building finished successfully.")
     return True
 
+
 async def main():
     """Main function to run the Graph RAG application with Neo4j."""
     # --- 0. Setup ---
@@ -51,11 +53,11 @@ async def main():
     try:
         # --- 1. Check if Graph is Empty and Build if Necessary ---
         result = graph_db_manager.execute_query("MATCH (n) RETURN count(n) as count")
-        node_count = result.single()["count"] if result else 0
+        node_count = result[0]["count"] if result else 0
 
         if node_count == 0:
             logger.info("Knowledge graph is empty. Building from source data...")
-            source_file = "data/test.txt"
+            source_file = "data/masters.txt"
             if not os.path.exists(source_file):
                 logger.error(f"Source data file not found at {source_file}")
                 return
@@ -64,7 +66,6 @@ async def main():
             logger.info(f"Knowledge graph already contains {node_count} nodes.")
             # Ensure vector store is in sync with the graph
             await sync_embeddings_with_vector_store()
-
 
         # --- 2. Start Interactive Q&A Loop ---
         logger.success("--- Knowledge Graph RAG is Ready ---")
@@ -89,11 +90,18 @@ async def main():
                 summary = await summarize_conversation(conversation_history)
                 if "Error:" not in summary:
                     conversation_history = [
-                        {"role": "system", "content": f"This is a summary of the previous conversation: {summary}"}
+                        {
+                            "role": "system",
+                            "content": f"This is a summary of the previous conversation: {summary}",
+                        }
                     ]
-                    logger.info(f"Conversation summarized. New token count: {count_tokens_in_messages(conversation_history)}")
+                    logger.info(
+                        f"Conversation summarized. New token count: {count_tokens_in_messages(conversation_history)}"
+                    )
                 else:
-                    logger.error("Could not replace history with summary due to an error.")
+                    logger.error(
+                        "Could not replace history with summary due to an error."
+                    )
 
             conversation_history.append({"role": "user", "content": query})
 
@@ -105,7 +113,9 @@ async def main():
                 logger.error(context)
                 continue
 
-            logger.info(f"--- Retrieved Context ---\n{context}\n--------------------------")
+            logger.info(
+                f"--- Retrieved Context ---\n{context}\n--------------------------"
+            )
 
             # --- 4. Generate Answer with LLM ---
             logger.info("Generating answer...")
@@ -142,15 +152,27 @@ async def main():
                 # --- 4b. Store conversation turn in vector store for semantic search ---
                 try:
                     turn_text = f"User: {query}\nAssistant: {answer}"
-                    turn_embedding = await get_embedding_from_api(turn_text, EMBEDDING_MODEL_NAME)
+                    turn_embedding = await get_embedding_from_api(
+                        turn_text, EMBEDDING_MODEL_NAME
+                    )
                     if turn_embedding:
                         turn_id = f"{int(time.time())}-{len(conversation_history)}"
                         await conversation_vector_store.insert_batch(
-                            [{"id": turn_id, "embedding": turn_embedding, "text": turn_text}]
+                            [
+                                {
+                                    "id": turn_id,
+                                    "embedding": turn_embedding,
+                                    "text": turn_text,
+                                }
+                            ]
                         )
-                        logger.info(f"Stored conversation turn '{turn_id}' in vector store.")
+                        logger.info(
+                            f"Stored conversation turn '{turn_id}' in vector store."
+                        )
                 except Exception as e:
-                    logger.error(f"Failed to store conversation turn in vector store: {e}")
+                    logger.error(
+                        f"Failed to store conversation turn in vector store: {e}"
+                    )
 
             except Exception as e:
                 logger.error(f"An error occurred while generating the answer: {e}")

@@ -115,7 +115,7 @@ class VectorCollectionManager:
 doc_vector_store = VectorCollectionManager(DOC_COLLECTION_NAME, id_type="int")
 conversation_vector_store = VectorCollectionManager(
     CONVERSATION_COLLECTION_NAME,
-    id_type="varchar",
+    id_type="string",
     id_max_length=1000, # A timestamp-based ID won't be this long
     dynamic_field=True
 )

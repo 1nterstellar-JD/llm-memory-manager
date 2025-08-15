@@ -140,7 +140,7 @@ def store_triplets_in_graph(triplets: List[Tuple[str, str, str]]):
     try:
         result = graph_db_manager.execute_query(safer_query, parameters={"triplets": triplets})
         if result:
-            count = result.single()[0]
+            count = result[0][0]
             logger.info(f"Stored {count} relationships in the graph.")
     except Exception as e:
         logger.error(f"Error storing triplets in graph: {e}")
