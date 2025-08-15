@@ -1,21 +1,10 @@
 import asyncio
-import time
-from src.config import (
-    llm_client,
-    LLM_MODEL_NAME,
-    EMBEDDING_MODEL_NAME,
-    CONVERSATION_TOKEN_THRESHOLD,
-)
-from src.conversation_processor import (
-    process_conversation,
-    count_tokens_in_messages,
-    summarize_conversation,
-    setup_conversation_database,
-)
-from src.retriever import retrieve_context, get_embedding_from_api
+from src.config import llm_client, LLM_MODEL_NAME
+from src.conversation_processor import setup_conversation_database
 from src.vector_store import conversation_vector_store, VectorCollectionManager
 from src.graph_db_manager import graph_db_manager
 from src.logger import logger
+from src.context_manager import ContextManager
 
 
 async def main():
@@ -28,12 +17,13 @@ async def main():
     await conversation_vector_store.setup()
     setup_conversation_database()
 
+    # Initialize the context manager that will handle the conversation logic
+    context_manager = ContextManager()
+
     try:
         # --- 1. Start Interactive Q&A Loop ---
         logger.success("--- Conversational Memory System is Ready ---")
         logger.info("Start chatting with the AI. Type 'exit' to quit.")
-
-        conversation_history = []
 
         while True:
             try:
@@ -46,98 +36,42 @@ async def main():
             if not query.strip():
                 continue
 
-            # --- 2. Summarize conversation if it's too long ---
-            token_count = count_tokens_in_messages(conversation_history)
-            if token_count > CONVERSATION_TOKEN_THRESHOLD:
-                summary = await summarize_conversation(conversation_history)
-                if "Error:" not in summary:
-                    conversation_history = [
-                        {
-                            "role": "system",
-                            "content": f"This is a summary of the previous conversation: {summary}",
-                        }
-                    ]
-                    logger.info(
-                        f"Conversation summarized. New token count: {count_tokens_in_messages(conversation_history)}"
-                    )
-                else:
-                    logger.error(
-                        "Could not replace history with summary due to an error."
-                    )
+            # --- 2. Add user message to context ---
+            # The manager will handle history, summarization, etc.
+            await context_manager.add_user_message(query)
 
-            conversation_history.append({"role": "user", "content": query})
-
-            # --- 3. Retrieve Context from past conversations ---
-            logger.info("Retrieving context from memory...")
-            context = await retrieve_context(query)
-
-            if "Error:" in context:
-                logger.error(context)
-                context = "" # Don't stop, just proceed without context
-
-            if context:
-                logger.info(
-                    f"--- Retrieved Context ---\n{context}\n--------------------------"
-                )
-
-            # --- 4. Generate Answer with LLM ---
+            # --- 3. Generate Answer with LLM ---
             logger.info("Generating answer...")
             try:
-                # Construct the prompt with or without context
-                prompt_messages = []
-                if context:
-                    prompt_messages.append({"role": "system", "content": f"Please use the following context to answer the user's question.\n\nContext:\n{context}"})
+                # The context_manager.messages property dynamically builds the prompt
+                # with the latest context and history.
+                messages_for_llm = await context_manager.messages
 
-                # Add recent history to the prompt for short-term memory
-                # For this simplified version, we just use the current query.
-                # A more advanced version might include the last few turns.
-                prompt_messages.append({"role": "user", "content": query})
+                if not messages_for_llm:
+                    logger.error("Could not generate messages for the LLM, skipping.")
+                    continue
 
                 response = await llm_client.chat.completions.create(
                     model=LLM_MODEL_NAME,
-                    messages=prompt_messages,
+                    messages=messages_for_llm,
                     temperature=0.7,
                 )
                 answer = response.choices[0].message.content
                 logger.success(f"--- Answer ---\n{answer}")
 
-                conversation_history.append({"role": "assistant", "content": answer})
-
-                # --- 5. Post-processing: Update long-term memory ---
-                # Process the last turn (user query + AI answer) to update the graph
-                await process_conversation(conversation_history[-2:])
-
-                # Store the turn in the vector store for semantic search
-                try:
-                    turn_text = f"User: {query}\nAssistant: {answer}"
-                    turn_embedding = await get_embedding_from_api(
-                        turn_text, EMBEDDING_MODEL_NAME
-                    )
-                    if turn_embedding:
-                        turn_id = f"{int(time.time())}-{len(conversation_history)}"
-                        await conversation_vector_store.insert_batch(
-                            [
-                                {
-                                    "id": turn_id,
-                                    "embedding": turn_embedding,
-                                    "text": turn_text,
-                                }
-                            ]
-                        )
-                        logger.info(
-                            f"Stored conversation turn '{turn_id}' in vector store."
-                        )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to store conversation turn in vector store: {e}"
-                    )
+                # --- 4. Add assistant answer and update memories ---
+                # The manager will handle updating the graph and vector store.
+                await context_manager.add_assistant_message(answer)
+                logger.success(await context_manager.messages)
 
             except Exception as e:
                 logger.error(f"An error occurred while generating the answer: {e}")
+
     finally:
-        # --- 6. Cleanup ---
+        # --- 5. Cleanup ---
         await VectorCollectionManager.close_all()
         graph_db_manager.close()
+        logger.info("--- System Shutting Down ---")
 
 
 if __name__ == "__main__":
