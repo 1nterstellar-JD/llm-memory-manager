@@ -6,7 +6,7 @@ from src.vector_store import conversation_vector_store, VectorCollectionManager
 from src.graph_db_manager import graph_db_manager
 from src.logger import logger
 from src.context_manager import ContextManager
-from src.tools import tools_schema, available_tools
+from src.llm_tools import tools_schema, available_tools
 
 
 async def main():
@@ -112,14 +112,18 @@ async def main():
                     final_answer = final_response.choices[0].message.content
                     logger.success(f"--- Final Answer ---{final_answer}")
                     # Run memory update in the background
-                    asyncio.create_task(context_manager.add_assistant_message(final_answer))
+                    asyncio.create_task(
+                        context_manager.add_assistant_message(final_answer)
+                    )
 
                 else:
                     # --- No tool calls, just a direct answer ---
                     final_answer = response_message.content
                     logger.success(f"--- Answer ---{final_answer}")
                     # Run memory update in the background
-                    asyncio.create_task(context_manager.add_assistant_message(final_answer))
+                    asyncio.create_task(
+                        context_manager.add_assistant_message(final_answer)
+                    )
 
             except Exception as e:
                 logger.error(f"An error occurred while generating the answer: {e}")

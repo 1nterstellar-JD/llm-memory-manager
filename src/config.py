@@ -30,8 +30,8 @@ embedding_client = AsyncOpenAI(api_key=OPENAI_API_KEY, base_url=EMBEDDING_MODEL_
 # --- Model Names ---
 LLM_MODEL_NAME = "gpt4o"
 # LLM_MODEL_NAME = "Qwen3-8B"
-# EMBEDDING_MODEL_NAME = "Qwen3-Embedding-0.6B"
-EMBEDDING_MODEL_NAME = "text-embedding-qwen3-embedding-0.6b"
+EMBEDDING_MODEL_NAME = "Qwen3-Embedding-0.6B"
+# EMBEDDING_MODEL_NAME = "text-embedding-qwen3-embedding-0.6b"
 
 # --- Neo4j Configuration ---
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
